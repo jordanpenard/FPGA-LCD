@@ -2,9 +2,6 @@
 
 The plan is to learn about a few different things by driving an LCD from an FPGA using SDRAM as frame buffer.
 
-## Dependancies
-- SDRAM controller : https://github.com/nullobject/sdram-fpga
-
 ## Hardware
 - Prototype board : Aessent aes220 (https://www.aessent.com/products/aes220-high-speed-usb-fpga-mini-module)
 - FPGA : XC3S200AN
@@ -15,3 +12,9 @@ The plan is to learn about a few different things by driving an LCD from an FPGA
 wget http://www.inp.nsk.su./~bolkhov/files/fonts/univga/uni-vga.tgz
 tar -xzf uni-vga.tgz
 ./bdf2coe.tcl uni_vga/u_vga16.bdf
+
+## SDRAM controller
+The SDRAM controller is from https://github.com/stffrdhrn/sdram-controller with a few modifications
+
+
+

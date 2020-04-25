@@ -1,21 +1,10 @@
 `timescale 1ns / 1ps
 //////////////////////////////////////////////////////////////////////////////////
-// Company: 
-// Engineer: 
-// 
-// Create Date:    16:43:04 04/23/2020 
-// Design Name: 
-// Module Name:    top 
-// Project Name: 
-// Target Devices: 
-// Tool versions: 
-// Description: 
 //
-// Dependencies: 
+// Target device : Xilinx Spartan 3AN XC3S200AN
+// Author : Jordan Penard 
 //
-// Revision: 
-// Revision 0.01 - File Created
-// Additional Comments: 
+// Design name : top
 //
 //////////////////////////////////////////////////////////////////////////////////
 
@@ -26,7 +15,7 @@
 `define V_BLANKING 45
 
 `define ADDR_WIDTH 23
-`define DATA_WIDTH 32
+`define DATA_WIDTH 16
 
 // ROM_PIPELINE is hard coded to 1 as the ROM contains 1 reg stage on the output
 `define ROM_PIPELINE 1
@@ -41,17 +30,17 @@
 
 
 module top(
-    input wire ref_clk,
+     input wire ref_clk,
      input wire rst,
      output wire [7:0] BANKA_io,
      output wire [7:0] BANKB_io,
      output wire [7:0] BANKC_io,
      output wire [6:0] BANKD_io,
-    output wire led1,
-    output wire led2,
-    output wire led3,
-    output wire led4
-/*     output wire SDRAM_CLK,
+     output wire led1,
+     output wire led2,
+     output wire led3,
+     output wire led4,
+     output wire SDRAM_CLK,
      output wire SDRAM_CKE,
      output wire SDRAM_CSB,
      output wire SDRAM_CASB,
@@ -62,24 +51,26 @@ module top(
      output wire SDRAM_UDQM,
      output wire [11:0] SDRAM_ADDR,
      inout wire [15:0] SDRAM_DQ     
-*/    );
+    );
 
     // ref_clk : 48Mhz
-    // sys_clk : 48Mhz
+    // sys_clk/SDRAM_CLK : 96Mhz
     // pixel_clk : 24Mhz (LCD refresh = ~60Hz)
     
-    //wire sys_clk;
-    //wire sdram_clk;
+    wire sys_clk;
     wire pixel_clk;
-    //wire rom_clk;
-/*
+
+    assign SDRAM_CLK = sys_clk;
+    
+    // -------------------- //
+    // CLK dividers
+
     dcm_sdram_clk i_dcm_sdram_clk (
          .CLKIN_IN(ref_clk), 
          .RST_IN(rst), 
-         .CLK0_OUT(sys_clk), 
-         .CLK270_OUT(SDRAM_CLK)
+         .CLK2X_OUT(sys_clk)
          );
-*/         
+         
     dcm_pixel_clk i_dcm_pixel_clk (
          .CLKIN_IN(ref_clk), 
          .RST_IN(rst), 
@@ -87,72 +78,170 @@ module top(
          .CLKDV_OUT(pixel_clk)
          );
 
-/*     
+    // -------------------- //
+    // SDRAM controller
+    
+    reg [7:0] cnt;
+    reg error;
+    
+    reg [3:0] state;
+    reg [1:0] cmd;
     reg [`ADDR_WIDTH-1:0] addr;
-    reg [`DATA_WIDTH-1:0] data;
-    wire [`DATA_WIDTH-1:0] q;
-    reg we = 'b0;
-    reg req = 'b0;
-    wire ack;
-    wire valid;
-    
-    sdram #(
-        .CLK_FREQ(48.0),
-        .ADDR_WIDTH(`ADDR_WIDTH),
-        .DATA_WIDTH(`DATA_WIDTH),
-        .SDRAM_ADDR_WIDTH(12),
-        .SDRAM_DATA_WIDTH(16),
-        .SDRAM_COL_WIDTH(9),
-        .SDRAM_ROW_WIDTH(12),
-        .SDRAM_BANK_WIDTH(2),
-        .CAS_LATENCY(2),
-        .BURST_LENGTH(2),
-        .T_DESL(200000.0),     // startup delay
-        .T_MRD(40.0),             // mode register cycle time
-        .T_RC(90.0),             // row cycle time
-        .T_RCD(20.0),             // RAS to CAS delay
-        .T_RP(20.0),             // precharge to activate delay
-        .T_WR(20.0),             // write recovery time
-        .T_REFI(15600.0)         // average refresh interval
-    ) i_sdram_controller (
-         .reset(rst), 
-         .clk(sys_clk), 
-         .addr(addr), 
-         .data(data), 
-         .we(we), 
-         .req(req), 
-         .ack(ack), 
-         .valid(valid), 
-         .q(q), 
-         .sdram_a(SDRAM_ADDR), 
-         .sdram_ba(SDRAM_BA), 
-         .sdram_dq(SDRAM_DQ), 
-         .sdram_cke(SDRAM_CKE), 
-         .sdram_cs_n(SDRAM_CSB), 
-         .sdram_ras_n(SDRAM_RASB), 
-         .sdram_cas_n(SDRAM_CASB), 
-         .sdram_we_n(SDRAM_WEB), 
-         .sdram_dqml(SDRAM_LDQM), 
-         .sdram_dqmh(SDRAM_UDQM)
-         );*/
-     
+    reg [`DATA_WIDTH-1:0] wr_data;
 
+    reg [3:0] state_next;
+    reg [1:0] cmd_next;    
+    reg [`ADDR_WIDTH-1:0] addr_next;
+    reg [`DATA_WIDTH-1:0] wr_data_next;
+
+    wire wr_enable;
+    wire rd_enable;
+    assign {wr_enable,rd_enable} = cmd;
+
+    wire [`DATA_WIDTH-1:0] rd_data;
+    wire rd_ready;
+    wire busy;
+        
+    assign led1 = !error;
+    assign led2 = 1'b1;
+    assign led3 = !busy;
+    assign led4 = busy;
     
-    //
-    /*
-    reg [25:0] cnt;
+    sdram_controller #(
+        .HADDR_WIDTH(`ADDR_WIDTH),
+        .HDATA_WIDTH(`DATA_WIDTH),
+        .COL_WIDTH(9),
+        .ROW_WIDTH(12),
+        .BANK_WIDTH(2),
+        .CLK_FREQUENCY(48), // Mhz
+        .REFRESH_TIME(64),  // ms     (how often we need to refresh)
+        .REFRESH_COUNT(4096)// cycles (how many refreshes required per refresh time)
+    ) i_sdram_controller (
+        .wr_addr(addr),
+        .wr_data(wr_data),
+        .wr_enable(wr_enable),
+        .rd_addr(addr),
+        .rd_data(rd_data),
+        .rd_ready(rd_ready),
+        .rd_enable(rd_enable),
+        .busy(busy),
+        .rst_n(!rst),
+        .clk(sys_clk),
+        .addr(SDRAM_ADDR),
+        .bank_addr(SDRAM_BA),
+        .data(SDRAM_DQ),
+        .clock_enable(SDRAM_CKE),
+        .cs_n(SDRAM_CSB),
+        .ras_n(SDRAM_RASB),
+        .cas_n(SDRAM_CASB),
+        .we_n(SDRAM_WEB),
+        .data_mask_low(SDRAM_LDQM),
+        .data_mask_high(SDRAM_UDQM)
+    );
+    
+    // -------------------- //
+    // Main system FSM
+
+    // State
+    localparam  INIT        = 4'b0000,
+                WR_REQUEST  = 4'b0001,
+                WR_RESPONSE = 4'b0010,
+                WAIT        = 4'b0011,
+                RD_REQUEST  = 4'b0100,
+                RD_RESPONSE = 4'b0101,
+                RD_VALID    = 4'b0110;
+
+    // Cmd
+    localparam  NOP   = 2'b00,
+                READ  = 2'b01,
+                WRITE = 2'b10;
 
     always @ (posedge sys_clk or posedge rst)
     begin
         if (rst) begin
+            state <= INIT;
+            cmd <= NOP;
+            addr <= 'b0;
+            wr_data <= 'b0;
+            error <= 'b0;
             cnt <= 'b0;
         end
         else begin
-            cnt <= cnt + 1;
+            state <= state_next;
+            cmd <= cmd_next;
+            addr <= addr_next;
+            wr_data <= wr_data_next;
+
+            if (state == INIT || state == WAIT)
+                cnt <= cnt + 1;
+            else
+                cnt <= 'b0;
+            
+            if (state == RD_VALID) begin
+                if (rd_data != 16'hFF00)
+                    error <= 'b1;
+            end
         end
-    end*/
+    end
+    
+    always @* begin
+        state_next = state;
+        cmd_next = cmd;
+        addr_next = addr;
+        wr_data_next = wr_data;
+        
+        case (state)
+            INIT: begin
+                if (cnt == {8{1'b1}}) begin
+                    state_next = WR_REQUEST;
+                    cmd_next = WRITE;
+                    wr_data_next = 16'hFF00;
+                end
+            end
+        
+            WR_REQUEST: begin
+                if (busy) begin
+                    state_next = WR_RESPONSE;
+                    cmd_next = NOP;
+                end
+            end
 
+            WR_RESPONSE: begin
+                if (!busy) begin
+                    state_next = WAIT;
+                    cmd_next = NOP;
+                end
+            end
 
+            WAIT: begin
+                if (cnt == {8{1'b1}}) begin
+                    state_next = RD_REQUEST;
+                    cmd_next = READ;
+                end
+            end
+
+            RD_REQUEST: begin
+                if (busy) begin
+                    state_next = RD_RESPONSE;
+                    cmd_next = NOP;
+                end
+            end
+
+            RD_RESPONSE: begin
+                if (rd_ready) begin
+                    state_next = RD_VALID;
+                    cmd_next = NOP;
+                end
+            end
+        
+            RD_VALID: begin
+                state_next = WR_REQUEST;
+                cmd_next = WRITE;
+                addr_next = addr + 1;
+            end
+        endcase
+    end
+    
     // -------------------- //
     // LCD control signals
 
@@ -254,11 +343,6 @@ module top(
     wire pixel_pipeline_rd_en = !blanking_1[`ROM_PIPELINE+`FIFO_PIPELINE-1] && !pixel_pipeline_empty;
     wire [23:0] pixel_pipeline_in = {24{from_char_rom[8-pixel_cnt_1[`ROM_PIPELINE-1][2:0]]}};
     wire [23:0] pixel_pipeline_out;
-
-    assign led1 = !pixel_pipeline_full;
-    assign led2 = !pixel_pipeline_empty;
-    assign led3 = !blanking;
-    assign led4 = 1'b1;
                 
     pixel_pipeline i_pixel_pipeline (
       .clk(pixel_clk), // input clk
@@ -354,87 +438,4 @@ module top(
     end
 
 
-/*
-    //`define N 1
-    reg error;
-    reg [3:0] state;
-    //reg [`N-1:0] addr_swipe = 'b0;
-
-    assign led1 = !we; // Write
-    assign led2 = !error;
-    assign led3 = !(state == 4'd1 | state == 4'd3); // Request
-    assign led4 = !(state == 4'd2 | state == 4'd4); // Response
-    
-    always @ (posedge sys_clk or posedge rst)
-    begin
-        if (rst) begin
-            addr <= 'b0;
-            //addr_swipe <= 'b0;
-            we <= 'b0;
-            req <= 'b0;
-            data <= 'b0;
-            state <= 'b0;
-            error <= 'b0;
-        end
-        else begin
-            // Wait
-            if (state == 4'd0) begin
-                if (cnt == {26{1'b1}})
-                    state <= 4'd1;
-            end
-            // Write request
-            else if (state == 4'd1) begin
-                //addr <= {addr_swipe,1'b0};
-                addr <= 23'h55AA55;
-                we <= 1'b1;
-                req <= 1'b1;
-                //data <= {addr_swipe,~addr_swipe} ;
-                data <= 32'h55AA55AA ;
-                if (ack)
-                    req <= 1'b0;
-                    state <= 4'd2;
-            end
-            // Write response
-            else if (state == 4'd2) begin
-                //if (addr_swipe == {`N{1'b1}}) begin
-                    state <= 4'd3;
-                    //addr_swipe <= 'b0;
-                //end
-                //else begin
-                //    state <= 4'd1;
-                //    addr_swipe <= addr_swipe + 1;                
-                //end
-            end
-            // Read request
-            else if (state == 4'd3) begin
-                //addr <= {addr_swipe,1'b0};
-                addr <= 23'h55AA55;
-                we <= 1'b0;
-                req <= 1'b1;
-                if (ack)
-                    req <= 1'b0;
-                    state <= 4'd4;
-            end
-            // Read response
-            else if (state == 4'd4) begin
-                if (valid) begin
-                    //if (q != {addr_swipe,~addr_swipe})
-                    if (q != 32'h55AA55AB)
-                        error <= 'b1;
-                    //if (addr_swipe == {`N{1'b1}}) begin
-                        state <= 4'd1;
-                        //addr_swipe <= 'b0;
-                    //end
-                    //else begin
-                    //    state <= 4'd3;
-                    //    addr_swipe <= addr_swipe + 1;                
-                    //end
-                end
-            end
-        end
-    end        */
-                
-
-
-    
 endmodule
