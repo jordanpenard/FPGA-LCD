@@ -147,7 +147,7 @@ module top(
 	reg [7:0] pixel_blanking_cnt;
 	reg [9:0] pixel_cnt;
 	reg [9:0] row_cnt;
-	wire h_blanking = pixel_blanking_cnt < `H_BLANKING;
+	wire h_blanking = pixel_blanking_cnt < (`H_BLANKING - 1);
 	wire v_blanking = row_cnt >= `LCD_HIGHT;
 	wire blanking = h_blanking || v_blanking;
 	
@@ -161,17 +161,16 @@ module top(
 		else begin
 			if (h_blanking)
 				pixel_blanking_cnt <= pixel_blanking_cnt + 1;
-			else
-				pixel_cnt <= pixel_cnt + 1;
-
-			if (pixel_cnt > `LCD_WIDTH) begin
+			else if (pixel_cnt == (`LCD_WIDTH - 1)) begin
 				pixel_cnt <= 'b0;
 				pixel_blanking_cnt <= 'b0;
-				if (row_cnt > (`LCD_HIGHT + `V_BLANKING)) 
+				if (row_cnt == (`LCD_HIGHT + `V_BLANKING)-1) 
 					row_cnt <= 'b0;
 				else 
 					row_cnt <= row_cnt + 1;
 			end
+			else
+				pixel_cnt <= pixel_cnt + 1;
 		end
 	end
 	
@@ -269,7 +268,7 @@ module top(
 	// UD = 0
 	assign BANKD_io[6] = enb; // ENB (DE mode)
 	assign BANKD_io[1] = !rst; // _RESET
-	assign BANKD_io[2] = pixel_clk;
+	assign BANKD_io[2] = !pixel_clk;
 	
 	assign BANKD_io[0] = 1'b1;
 	assign BANKD_io[4] = 1'b0;
@@ -306,8 +305,8 @@ module top(
 				blue_reg <= 8'h0;
 			end
 			else begin
-				/*
-				if (row_cnt_1[`PIXEL_PIPELINE-1][3] && pixel_cnt_1[`PIXEL_PIPELINE-1][2]) begin
+
+				if (pixel_cnt_1[`PIXEL_PIPELINE-1][7] ^ row_cnt_1[`PIXEL_PIPELINE-1][7]) begin
 					red_reg <= 8'hFF;
 					green_reg <= 8'hFF;
 					blue_reg <= 8'hFF;
@@ -317,7 +316,8 @@ module top(
 					green_reg <= 8'h0;
 					blue_reg <= 8'h0;
 				end
-				*/
+				
+				/*
 				if (row_cnt_1[`PIXEL_PIPELINE-1] < (`LCD_HIGHT/3)) begin
 					red_reg <= 255-(pixel_cnt_1[`PIXEL_PIPELINE-1][7:1]<<1);
 					green_reg <= (pixel_cnt_1[`PIXEL_PIPELINE-1][7:1]<<1);
@@ -333,6 +333,7 @@ module top(
 					green_reg <= (pixel_cnt_1[`PIXEL_PIPELINE-1][7:1]<<1);
 					blue_reg <= 255-(pixel_cnt_1[`PIXEL_PIPELINE-1][7:1]<<1);
 				end
+				*/
 			end
 		end
 	end
