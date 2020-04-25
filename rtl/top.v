@@ -233,12 +233,12 @@ module top(
     // -------------------- //
     // Char graphics generation
     
-    wire [7:0] char_to_print = "0" + {5'b0,pixel_cnt[9:3]};
+    wire [7:0] char_to_print = "0" + pixel_cnt[9:3];
     wire [7:0] from_char_rom;
     
     // The ROM is 8x4096 (256 char of 8x16), built from the generated font_rom.coe, 1 stage of reg on the output
     font_rom i_font_rom (
-        .a((char_to_print << 4) | row_cnt[3:0]),
+        .a({char_to_print,row_cnt[3:0]}),
         .clk(pixel_clk),
         .qspo(from_char_rom)
     );
