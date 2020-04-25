@@ -305,7 +305,18 @@ module top(
 				blue_reg <= 8'h0;
 			end
 			else begin
-
+				if (pixel_pipeline_out[pixel_cnt_1[`PIXEL_PIPELINE-1][2:0]]) begin
+					red_reg <= 8'hFF;
+					green_reg <= 8'hFF;
+					blue_reg <= 8'hFF;
+				end
+				else begin
+					red_reg <= 8'h0;
+					green_reg <= 8'h0;
+					blue_reg <= 8'h0;
+				end
+				/* 
+				// Checker board pattern
 				if (pixel_cnt_1[`PIXEL_PIPELINE-1][7] ^ row_cnt_1[`PIXEL_PIPELINE-1][7]) begin
 					red_reg <= 8'hFF;
 					green_reg <= 8'hFF;
@@ -316,8 +327,9 @@ module top(
 					green_reg <= 8'h0;
 					blue_reg <= 8'h0;
 				end
-				
+				*/
 				/*
+				// Color range pattern
 				if (row_cnt_1[`PIXEL_PIPELINE-1] < (`LCD_HIGHT/3)) begin
 					red_reg <= 255-(pixel_cnt_1[`PIXEL_PIPELINE-1][7:1]<<1);
 					green_reg <= (pixel_cnt_1[`PIXEL_PIPELINE-1][7:1]<<1);
