@@ -1,9 +1,13 @@
-NET "clk" TNM_NET = "clk";
-TIMESPEC "TS_CLK" = PERIOD "clk" 20ns HIGH 50 %;
+NET "ref_clk" TNM_NET = "ref_clk";
+TIMESPEC "TS_CLK" = PERIOD "ref_clk" 20.833ns HIGH 50 %;
+
+# Waiving place error by allowing none dedicated clock path to feed the DCMs
+NET "ref_clk" CLOCK_DEDICATED_ROUTE = FALSE;
+PIN "i_dcm_pixel_clk/DCM_SP_INST.CLKIN" CLOCK_DEDICATED_ROUTE = FALSE;
 
 #   Net        Ball       Drive
 
-NET clk   LOC= T9  | IOSTANDARD = LVCMOS33;  #
+NET ref_clk   LOC= T9  | IOSTANDARD = LVCMOS33;  #
 
 NET rst   LOC= T5  | IOSTANDARD = LVCMOS33;  #  
 #NET bt1   LOC= D6  |IOSTANDARD = LVCMOS33 |DRIVE = 12;   #   
