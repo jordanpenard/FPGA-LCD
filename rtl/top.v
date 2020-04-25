@@ -235,7 +235,7 @@ module top(
 	
 	wire [7:0] from_char_rom;
 	
-	// The ROM is 8x4096 (256 char of 8x16), built from the generated font_rom.coe, fully async
+	// The ROM is 8x4096 (256 char of 8x16), built from the generated font_rom.coe, 1 stage of reg on the output
 	font_rom i_font_rom (
 		.a((("0" + {5'b0,pixel_cnt[9:3]}) << 4) | row_cnt[3:0]),
 		.clk(pixel_clk),
@@ -249,27 +249,26 @@ module top(
 
 	wire pixel_pipeline_full;
 	wire pixel_pipeline_empty;
-	wire pixel_pipeline_wr_en = !blanking_1[`ROM_PIPELINE-1] && !pixel_pipeline_full && (pixel_cnt_1[`ROM_PIPELINE-1][2:0] == 3'b000);
-	wire pixel_pipeline_rd_en = !blanking_1[`ROM_PIPELINE+`FIFO_PIPELINE-1] && !pixel_pipeline_empty && (pixel_cnt_1[`ROM_PIPELINE+`FIFO_PIPELINE-1][2:0] == 3'b000);
-	wire [7:0] pixel_pipeline_out;
+	wire pixel_pipeline_wr_en = !blanking_1[`ROM_PIPELINE-1] && !pixel_pipeline_full;
+	wire pixel_pipeline_rd_en = !blanking_1[`ROM_PIPELINE+`FIFO_PIPELINE-1] && !pixel_pipeline_empty;
+	wire [23:0] pixel_pipeline_in = {24{from_char_rom[8-pixel_cnt_1[`ROM_PIPELINE-1][2:0]]}};
+	wire [23:0] pixel_pipeline_out;
 
 	assign led1 = !pixel_pipeline_full;
 	assign led2 = !pixel_pipeline_empty;
 	assign led3 = !blanking;
 	assign led4 = 1'b1;
-	
+				
 	pixel_pipeline i_pixel_pipeline (
 	  .clk(pixel_clk), // input clk
 	  .rst(rst), // input rst
-	  .din(from_char_rom), // input [7 : 0] din
+	  .din(pixel_pipeline_in), // input [23 : 0] din
 	  .wr_en(pixel_pipeline_wr_en), // input wr_en
 	  .rd_en(pixel_pipeline_rd_en), // input rd_en
-	  .dout(pixel_pipeline_out), // output [7 : 0] dout
+	  .dout(pixel_pipeline_out), // output [23 : 0] dout
 	  .full(pixel_pipeline_full), // output full
-	  .almost_full(), // output almost_full
-	  .empty(pixel_pipeline_empty), // output empty
-	  .almost_empty() // output almost_empty
-	);	
+	  .empty(pixel_pipeline_empty) // output empty
+	);
 	
 	// -------------------- //
 	// LCD final stage
@@ -315,22 +314,10 @@ module top(
 			blue_reg <= 8'b0;
 		end
 		else begin
-			if (blanking_1[`PIXEL_PIPELINE-1]) begin
-				red_reg <= 8'h0;
-				green_reg <= 8'h0;
-				blue_reg <= 8'h0;
-			end
-			else begin
-				if (pixel_pipeline_out[8-pixel_cnt_1[`PIXEL_PIPELINE-1][2:0]]) begin
-					red_reg <= 8'hFF;
-					green_reg <= 8'hFF;
-					blue_reg <= 8'hFF;
-				end
-				else begin
-					red_reg <= 8'h0;
-					green_reg <= 8'h0;
-					blue_reg <= 8'h0;
-				end
+			red_reg <= pixel_pipeline_out[23:16];
+			green_reg <= pixel_pipeline_out[15:8];
+			blue_reg <= pixel_pipeline_out[7:0];
+
 				/* 
 				// Checker board pattern
 				if (pixel_cnt_1[`PIXEL_PIPELINE-1][7] ^ row_cnt_1[`PIXEL_PIPELINE-1][7]) begin
@@ -362,7 +349,6 @@ module top(
 					blue_reg <= 255-(pixel_cnt_1[`PIXEL_PIPELINE-1][7:1]<<1);
 				end
 				*/
-			end
 		end
 	end
 
