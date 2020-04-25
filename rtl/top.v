@@ -28,6 +28,18 @@
 `define ADDR_WIDTH 23
 `define DATA_WIDTH 32
 
+// ROM_PIPELINE can only be between 1 and 7 because the char rom spits out 8 bits, 
+//  and this define only set at which cycle does the pipeline fifo should
+//  read (3 lsb of the pixel counter). Min is 1 because the rom is async.
+`define ROM_PIPELINE 3'b001
+
+// FIFO_PIPELINE defines the delay between the write and the read of the pipeline fifo,
+//  and it's min value is 2
+`define FIFO_PIPELINE 2
+
+`define PIXEL_PIPELINE (`ROM_PIPELINE + `FIFO_PIPELINE)
+
+
 module top(
     input wire ref_clk,
 	 input wire rst,
@@ -178,8 +190,10 @@ module top(
 	// Char graphics generation
 	
 	wire [7:0] from_char_rom;
+	
+	// The ROM is 8x4096 (256 char of 8x16), built from the generated font_rom.coe, fully async
 	font_rom i_font_rom (
-		.a(((12'h30 + {5'b0,pixel_cnt[9:3]}) << 4) | row_cnt[3:0]),
+		.a((("0" + {5'b0,pixel_cnt[9:3]}) << 4) | row_cnt[3:0]),
 		.spo(from_char_rom)
 	);
 	// Checker board pattern bypassing the rom
@@ -188,7 +202,6 @@ module top(
 	// -------------------- //
 	// Pixel control pileline
 	
-	`define PIXEL_PIPELINE 10
 	reg [7:0] pixel_blanking_cnt_1[`PIXEL_PIPELINE-1:0];
 	reg [9:0] pixel_cnt_1[`PIXEL_PIPELINE-1:0];
 	reg [9:0] row_cnt_1[`PIXEL_PIPELINE-1:0];
@@ -235,7 +248,7 @@ module top(
 
 	wire pixel_pipeline_full;
 	wire pixel_pipeline_empty;
-	wire pixel_pipeline_wr_en = !blanking && !pixel_pipeline_full && (pixel_cnt[2:0] == 3'b111);
+	wire pixel_pipeline_wr_en = !blanking && !pixel_pipeline_full && (pixel_cnt[2:0] == `ROM_PIPELINE);
 	wire pixel_pipeline_rd_en = !blanking_1[`PIXEL_PIPELINE-2] && !pixel_pipeline_empty && (pixel_cnt_1[`PIXEL_PIPELINE-2][2:0] == 3'b000);
 	wire [7:0] pixel_pipeline_out;
 
@@ -267,7 +280,7 @@ module top(
 	// LEDCTRL = 1
 	// PWCTRL = 1
 	// LR = 0
-	// UD = 0
+	// UD = 1
 	assign BANKD_io[6] = enb; // ENB (DE mode)
 	assign BANKD_io[1] = !rst; // _RESET
 	assign BANKD_io[2] = !pixel_clk;
