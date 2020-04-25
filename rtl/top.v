@@ -28,16 +28,16 @@
 `define ADDR_WIDTH 23
 `define DATA_WIDTH 32
 
-// ROM_PIPELINE can only be between 1 and 7 because the char rom spits out 8 bits, 
-//  and this define only set at which cycle does the pipeline fifo should
-//  read (3 lsb of the pixel counter). Min is 1 because the rom is async.
-`define ROM_PIPELINE 3'b001
+// ROM_PIPELINE is hard coded to 1 as the ROM contains 1 reg stage on the output
+`define ROM_PIPELINE 1
 
-// FIFO_PIPELINE defines the delay between the write and the read of the pipeline fifo,
-//  and it's min value is 2
-`define FIFO_PIPELINE 2
+// FIFO_PIPELINE defines the delay between the write and the read of the pipeline fifo
+`define FIFO_PIPELINE 1
 
-`define PIXEL_PIPELINE (`ROM_PIPELINE + `FIFO_PIPELINE)
+// OUTPUT_PIPELINE is hard coded to 1 final stage of reg before going to the LCD IOs
+`define OUTPUT_PIPELINE 1
+
+`define PIXEL_PIPELINE (`ROM_PIPELINE + `FIFO_PIPELINE + `OUTPUT_PIPELINE)
 
 
 module top(
@@ -185,20 +185,7 @@ module top(
 				pixel_cnt <= pixel_cnt + 1;
 		end
 	end
-	
-	// -------------------- //
-	// Char graphics generation
-	
-	wire [7:0] from_char_rom;
-	
-	// The ROM is 8x4096 (256 char of 8x16), built from the generated font_rom.coe, fully async
-	font_rom i_font_rom (
-		.a((("0" + {5'b0,pixel_cnt[9:3]}) << 4) | row_cnt[3:0]),
-		.spo(from_char_rom)
-	);
-	// Checker board pattern bypassing the rom
-	//assign from_char_rom = row_cnt[3] ? 8'hF0 : 8'h0F;
-	
+
 	// -------------------- //
 	// Pixel control pileline
 	
@@ -244,12 +231,26 @@ module top(
 	endgenerate
 	
 	// -------------------- //
+	// Char graphics generation
+	
+	wire [7:0] from_char_rom;
+	
+	// The ROM is 8x4096 (256 char of 8x16), built from the generated font_rom.coe, fully async
+	font_rom i_font_rom (
+		.a((("0" + {5'b0,pixel_cnt[9:3]}) << 4) | row_cnt[3:0]),
+		.clk(pixel_clk),
+		.qspo(from_char_rom)
+	);
+	// Checker board pattern bypassing the rom
+	//assign from_char_rom = row_cnt[3] ? 8'hF0 : 8'h0F;
+	
+	// -------------------- //
 	// Pixel data pileline
 
 	wire pixel_pipeline_full;
 	wire pixel_pipeline_empty;
-	wire pixel_pipeline_wr_en = !blanking && !pixel_pipeline_full && (pixel_cnt[2:0] == `ROM_PIPELINE);
-	wire pixel_pipeline_rd_en = !blanking_1[`PIXEL_PIPELINE-2] && !pixel_pipeline_empty && (pixel_cnt_1[`PIXEL_PIPELINE-2][2:0] == 3'b000);
+	wire pixel_pipeline_wr_en = !blanking_1[`ROM_PIPELINE-1] && !pixel_pipeline_full && (pixel_cnt_1[`ROM_PIPELINE-1][2:0] == 3'b000);
+	wire pixel_pipeline_rd_en = !blanking_1[`ROM_PIPELINE+`FIFO_PIPELINE-1] && !pixel_pipeline_empty && (pixel_cnt_1[`ROM_PIPELINE+`FIFO_PIPELINE-1][2:0] == 3'b000);
 	wire [7:0] pixel_pipeline_out;
 
 	assign led1 = !pixel_pipeline_full;
