@@ -142,7 +142,7 @@ module top(
 
 	
 	// -------------------- //
-	// X and Y counters plus control
+	// LCD control signals
 
 	reg [7:0] pixel_blanking_cnt;
 	reg [9:0] pixel_cnt;
@@ -180,14 +180,15 @@ module top(
 	wire [7:0] from_char_rom;
 	font_rom i_font_rom (
 		.a(((12'h30 + {5'b0,pixel_cnt[9:3]}) << 4) | row_cnt[3:0]),
-		.spo()
+		.spo(from_char_rom)
 	);
-	assign from_char_rom = row_cnt[3] ? 8'hF0 : 8'h0F;
+	// Checker board pattern bypassing the rom
+	//assign from_char_rom = row_cnt[3] ? 8'hF0 : 8'h0F;
 	
 	// -------------------- //
-	// Pileline
+	// Pixel control pileline
 	
-	`define PIXEL_PIPELINE 16
+	`define PIXEL_PIPELINE 10
 	reg [7:0] pixel_blanking_cnt_1[`PIXEL_PIPELINE-1:0];
 	reg [9:0] pixel_cnt_1[`PIXEL_PIPELINE-1:0];
 	reg [9:0] row_cnt_1[`PIXEL_PIPELINE-1:0];
@@ -230,6 +231,7 @@ module top(
 	endgenerate
 	
 	// -------------------- //
+	// Pixel data pileline
 
 	wire pixel_pipeline_full;
 	wire pixel_pipeline_empty;
@@ -255,8 +257,8 @@ module top(
 	  .almost_empty() // output almost_empty
 	);	
 	
-	
-	//
+	// -------------------- //
+	// LCD final stage
 
 	reg enb;
 	
@@ -305,7 +307,7 @@ module top(
 				blue_reg <= 8'h0;
 			end
 			else begin
-				if (pixel_pipeline_out[pixel_cnt_1[`PIXEL_PIPELINE-1][2:0]]) begin
+				if (pixel_pipeline_out[8-pixel_cnt_1[`PIXEL_PIPELINE-1][2:0]]) begin
 					red_reg <= 8'hFF;
 					green_reg <= 8'hFF;
 					blue_reg <= 8'hFF;
