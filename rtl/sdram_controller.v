@@ -53,9 +53,12 @@ parameter CLK_FREQUENCY = 133;  // Mhz
 parameter REFRESH_TIME =  32;   // ms     (how often we need to refresh)
 parameter REFRESH_COUNT = 8192; // cycles (how many refreshes required per refresh time)
 
+// Can be 1, 2, 4 or 8
+localparam BURST_LENGTH = 8; 
+
 /* Parameters for Host interface */
-parameter HADDR_WIDTH = BANK_WIDTH + ROW_WIDTH + COL_WIDTH;
-parameter HDATA_WIDTH = 16;
+localparam HADDR_WIDTH = BANK_WIDTH + ROW_WIDTH + COL_WIDTH;
+localparam HDATA_WIDTH = 16*BURST_LENGTH;
 
 /* Internal Parameters */
 localparam SDRADDR_WIDTH = ROW_WIDTH > COL_WIDTH ? ROW_WIDTH : COL_WIDTH;
@@ -173,7 +176,7 @@ assign {clock_enable, cs_n, ras_n, cas_n, we_n} = command[7:3];
 assign bank_addr      = (state[4]) ? bank_addr_r : command[2:1];
 assign addr           = (state[4] | state == INIT_LOAD) ? addr_r : { {SDRADDR_WIDTH-11{1'b0}}, command[0], 10'd0 };
 
-assign data = (state == WRIT_CAS) ? wr_data_r : 16'bz;
+assign data = (state == WRIT_CAS) ? wr_data_r[15:0] : 16'bz;
 assign rd_ready = rd_ready_r;
 
 // HOST INTERFACE
@@ -186,8 +189,8 @@ always @ (posedge clk, negedge rst_n)
     state_cnt <= 4'hf;
 
     haddr_r <= {HADDR_WIDTH{1'b0}};
-    wr_data_r <= 16'b0;
-    rd_data_r <= 16'b0;
+    wr_data_r <= {HDATA_WIDTH{1'b0}};
+    rd_data_r <= {HDATA_WIDTH{1'b0}};
     busy <= 1'b0;
     end
   else
@@ -201,16 +204,23 @@ always @ (posedge clk, negedge rst_n)
     else
       state_cnt <= state_cnt - 1'b1;
 
-    if (wr_enable)
+    if (state == WRIT_CAS)
+      wr_data_r <= wr_data_r >> 16;
+    else if (wr_enable)
       wr_data_r <= wr_data;
+    
+    if (state == READ_ACT)
+      rd_data_r <= {HDATA_WIDTH{1'b0}};
 
     if (state == READ_READ)
       begin
-      rd_data_r <= data;
-      rd_ready_r <= 1'b1;
+      rd_data_r <= rd_data_r | (data<<(16*((BURST_LENGTH-1)-state_cnt)));
+      if (!state_cnt)
+        rd_ready_r <= 1'b1;
       end
-    else
+    else begin
       rd_ready_r <= 1'b0;
+    end
 
     busy <= state[4];
 
@@ -278,7 +288,11 @@ begin
      //                                       R  A  EUR
      //                                       S  S-3Q ST
      //                                       T  654L210
-     addr_r = {{SDRADDR_WIDTH-10{1'b0}}, 3'b000,CAS_LATENCY,4'b0000};
+     addr_r = {{SDRADDR_WIDTH-10{1'b0}}, 3'b000,CAS_LATENCY,1'b0,
+        (BURST_LENGTH==1)?3'b000:
+        ((BURST_LENGTH==2)?3'b001:
+        ((BURST_LENGTH==4)?3'b010:
+        ((BURST_LENGTH==8)?3'b011:3'b000)))};
      end
 end
 
@@ -381,6 +395,7 @@ begin
             begin
             next = WRIT_CAS;
             command_nxt = CMD_WRIT;
+            state_cnt_nxt = BURST_LENGTH-1;
             end
           WRIT_CAS:
             begin
@@ -408,6 +423,7 @@ begin
           READ_NOP2:
             begin
             next = READ_READ;
+            state_cnt_nxt = BURST_LENGTH-1;
             end
           // READ_READ: default - IDLE
 
