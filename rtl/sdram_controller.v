@@ -68,6 +68,9 @@ localparam CYCLES_BETWEEN_REFRESH = ( CLK_FREQUENCY
                                       * REFRESH_TIME
                                     ) / REFRESH_COUNT;
 
+// CAS latency can either be 2 or 3
+localparam CAS_LATENCY = 3'd2;
+
 // STATES - State
 localparam IDLE      = 5'b00000;
 
@@ -275,7 +278,7 @@ begin
      //                                       R  A  EUR
      //                                       S  S-3Q ST
      //                                       T  654L210
-     addr_r = {{SDRADDR_WIDTH-10{1'b0}}, 10'b0000110000};
+     addr_r = {{SDRADDR_WIDTH-10{1'b0}}, 3'b000,CAS_LATENCY,4'b0000};
      end
 end
 
@@ -390,7 +393,7 @@ begin
           READ_ACT:
             begin
             next = READ_NOP1;
-            state_cnt_nxt = 4'd1;
+            state_cnt_nxt = CAS_LATENCY - 2;
             end
           READ_NOP1:
             begin
