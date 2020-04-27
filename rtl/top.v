@@ -62,7 +62,7 @@ module top(
 
     reg pixel_rst;
 
-    assign SDRAM_CLK = sys_clk;
+    //assign SDRAM_CLK = sys_clk;
     
     // -------------------- //
     // CLK dividers
@@ -70,13 +70,14 @@ module top(
     dcm_sys_clk i_dcm_sys_clk (
          .CLKIN_IN(ref_clk), 
          .RST_IN(rst), 
-         .CLK2X_OUT(sys_clk)
+         .CLK0_OUT(sys_clk),
+         .CLK270_OUT(SDRAM_CLK),
+         .CLK2X_OUT()
          );
          
     dcm_pixel_clk i_dcm_pixel_clk (
          .CLKIN_IN(ref_clk), 
          .RST_IN(rst), 
-         .CLK0_OUT(), 
          .CLKDV_OUT(pixel_clk)
          );
 
@@ -92,6 +93,8 @@ module top(
     reg [`ADDR_WIDTH-1:0] mem_wr_addr;
     reg [`DATA_WIDTH-1:0] mem_wr_data;
 
+    reg [`DATA_WIDTH-1:0] data_from_sdram;
+    
     reg [3:0] state_next;
     reg [1:0] cmd_next;    
     reg [`ADDR_WIDTH-1:0] mem_rd_addr_next;
@@ -111,8 +114,9 @@ module top(
         .ROW_WIDTH(12),
         .BANK_WIDTH(2),
         .CLK_FREQUENCY(48), // Mhz
-        .REFRESH_TIME(64),  // ms     (how often we need to refresh)
-        .REFRESH_COUNT(4096)// cycles (how many refreshes required per refresh time)
+        .REFRESH_TIME(64),  // ms     (Tref : Refresh period, how often we need to refresh)
+        .REFRESH_COUNT(1),  // cycles (how many refreshes required per refresh time)
+        .ROW_CYCLE_TIME(80) // ns     (Trfc : Row cycle time, the time it takes to auto refresh)
     ) i_sdram_controller (
         .wr_addr(mem_wr_addr),
         .wr_data(mem_wr_data),
@@ -135,6 +139,7 @@ module top(
         .data_mask_low(SDRAM_LDQM),
         .data_mask_high(SDRAM_UDQM)
     );
+    
     
     // -------------------- //
     // Main system FSM
@@ -180,8 +185,8 @@ module top(
         if (rst) begin
             state <= INIT;
             cmd <= NOP;
-            mem_rd_addr <= 23'h000234;
-            mem_wr_addr <= 23'h000234;
+            mem_rd_addr <= 'b0;
+            mem_wr_addr <= 'b0;
             mem_wr_data <= 'b0;
             error <= 'b0;
             cnt <= 'b0;
@@ -189,6 +194,7 @@ module top(
             char_gen_row_r <= 'b0;
             char_gen_pixel_x_r <= 3'b111;
             char_gen_pixel_y_r <= 'b0;
+            data_from_sdram <= 'b0;
         end
         else begin
             state <= state_next;
@@ -207,8 +213,7 @@ module top(
                 cnt <= 'b0;
             
             if (state == RD_VALID) begin
-                if (mem_rd_data != `DATA_WIDTH'h0123456789ABCDEF0123456789ABCDEF)
-                    error <= 'b1;
+                data_from_sdram <= {mem_rd_data,data_from_sdram[127:64]};
             end
         end
     end
@@ -228,9 +233,13 @@ module top(
         case (state)
             INIT: begin
                 if (cnt == {8{1'b1}}) begin
-                    state_next = WR_REQUEST;
-                    cmd_next = WRITE;
-                    mem_wr_data_next = `DATA_WIDTH'h0123456789ABCDEF0123456789ABCDEF;
+//                    state_next = WR_REQUEST;
+//                    cmd_next = WRITE;
+                    state_next = RD_REQUEST;
+                    cmd_next = READ;
+                    mem_rd_addr_next = 'b0;
+                    mem_wr_addr_next = 'b0;
+                    mem_wr_data_next = 64'h0123456789ABCDEF;
                 end
             end
         
@@ -243,8 +252,16 @@ module top(
 
             WR_RESPONSE: begin
                 if (!mem_busy) begin
-                    state_next = WAIT;
-                    cmd_next = NOP;
+                    if (mem_wr_addr != 0) begin
+                        state_next = WAIT;
+                        cmd_next = NOP;
+                    end
+                    else begin
+                        state_next = WR_REQUEST;
+                        cmd_next = WRITE;
+                        mem_wr_addr_next = mem_wr_addr_next + 4;
+                        mem_wr_data_next = 64'hFEDCBA9876543210;
+                    end
                 end
             end
 
@@ -270,8 +287,15 @@ module top(
             end
         
             RD_VALID: begin
-                state_next = DISPLAY;
-                cmd_next = NOP;
+                if (mem_rd_addr != 0) begin
+                    state_next = DISPLAY;
+                    cmd_next = NOP;
+                end
+                else begin
+                    state_next = RD_REQUEST;
+                    cmd_next = READ;
+                    mem_rd_addr_next = mem_rd_addr_next + 4;
+                end
             end
             
             DISPLAY: begin
@@ -350,7 +374,7 @@ module top(
                 if (char_gen_row_r == 1 && char_gen_col_r < (1+(`DATA_WIDTH/4)))
                     font_rom_char_to_print_next = "0" + (4'hF & (mem_wr_data >> (`DATA_WIDTH - (4*char_gen_col_r))));
                 if (char_gen_row_r == 2 && char_gen_col_r < (1+(`DATA_WIDTH/4)))
-                    font_rom_char_to_print_next = "0" + (4'hF & (mem_rd_data >> (`DATA_WIDTH - (4*char_gen_col_r))));
+                    font_rom_char_to_print_next = "0" + (4'hF & (data_from_sdram >> (`DATA_WIDTH - (4*char_gen_col_r))));
                 if (font_rom_char_to_print_next > "9" && font_rom_char_to_print_next < "A")
                     font_rom_char_to_print_next = font_rom_char_to_print_next + 7;
             end

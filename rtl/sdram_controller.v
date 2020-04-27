@@ -2,7 +2,9 @@
 //////////////////////////////////////////////////////////////////////////////////
 //
 // Target device : Xilinx Spartan 3AN XC3S200AN
-// Author : https://github.com/stffrdhrn/sdram-controller
+// Author : Jordan Penard
+// Source : https://github.com/stffrdhrn/sdram-controller
+// Design name : sdram_controller
 // Comments :   Modified for this project
 //              Simple controller for M52D128168A-10BG SDRAM (2M x 16 Bit x 4 Banks)
 //              Working on making it a bit more generic via parameters
@@ -23,7 +25,6 @@
 //                  This simple host interface has a busy signal to tell you when you are
 //                  not able to issue commands.
 //
-// Design name : sdram_controller
 //
 //////////////////////////////////////////////////////////////////////////////////
 
@@ -46,15 +47,16 @@ module sdram_controller (
 );
 
 /* Parameters for SDRAM */
-parameter ROW_WIDTH = 13;
+parameter ROW_WIDTH = 12;
 parameter COL_WIDTH = 9;
 parameter BANK_WIDTH = 2;
-parameter CLK_FREQUENCY = 133;  // Mhz
-parameter REFRESH_TIME =  32;   // ms     (how often we need to refresh)
-parameter REFRESH_COUNT = 8192; // cycles (how many refreshes required per refresh time)
+parameter CLK_FREQUENCY = 96;  // Mhz
+parameter REFRESH_TIME =  64;   // ms     (Tref : Refresh period, how often we need to refresh)
+parameter REFRESH_COUNT = 1;    // cycles (how many refreshes required per refresh time)
+parameter ROW_CYCLE_TIME = 80;  // ns     (Trfc : Row cycle time, the time it takes to auto refresh)
 
 // Can be 1, 2, 4 or 8
-localparam BURST_LENGTH = 8; 
+localparam BURST_LENGTH = 4; 
 
 /* Parameters for Host interface */
 localparam HADDR_WIDTH = BANK_WIDTH + ROW_WIDTH + COL_WIDTH;
@@ -72,7 +74,14 @@ localparam CYCLES_BETWEEN_REFRESH = ( CLK_FREQUENCY
                                     ) / REFRESH_COUNT;
 
 // CAS latency can either be 2 or 3
-localparam CAS_LATENCY = 3'd2;
+localparam CAS_LATENCY = 3'd3;
+
+// 0 : Sequential Counting
+// 1 : Interleave Counting
+localparam BURST_COUNTING = 1'b0;
+
+// Auto precharge during read/write
+localparam AUTO_PRECHARGE = 1'b1;
 
 // STATES - State
 localparam IDLE      = 5'b00000;
@@ -101,7 +110,8 @@ localparam READ_ACT  = 5'b10000,
 localparam WRIT_ACT  = 5'b11000,
            WRIT_NOP1 = 5'b11001,
            WRIT_CAS  = 5'b11010,
-           WRIT_NOP2 = 5'b11011;
+           WRIT_BURST= 5'b11011,
+           WRIT_NOP2 = 5'b00110;
 
 // Commands              CCRCWBBA
 //                       ESSSE100
@@ -160,7 +170,7 @@ assign rd_data        = rd_data_r;
 
 /* Internal Wiring */
 reg [3:0] state_cnt;
-reg [9:0] refresh_cnt;
+reg [23:0] refresh_cnt;
 
 reg [7:0] command;
 reg [4:0] state;
@@ -176,7 +186,7 @@ assign {clock_enable, cs_n, ras_n, cas_n, we_n} = command[7:3];
 assign bank_addr      = (state[4]) ? bank_addr_r : command[2:1];
 assign addr           = (state[4] | state == INIT_LOAD) ? addr_r : { {SDRADDR_WIDTH-11{1'b0}}, command[0], 10'd0 };
 
-assign data = (state == WRIT_CAS) ? wr_data_r[15:0] : 16'bz;
+assign data = (state == WRIT_CAS || state == WRIT_BURST) ? wr_data_r[15:0] : 16'bz;
 assign rd_ready = rd_ready_r;
 
 // HOST INTERFACE
@@ -204,9 +214,10 @@ always @ (posedge clk, negedge rst_n)
     else
       state_cnt <= state_cnt - 1'b1;
 
-    if (state == WRIT_CAS)
-      wr_data_r <= wr_data_r >> 16;
-    else if (wr_enable)
+    if (state == WRIT_CAS || state == WRIT_BURST)
+      wr_data_r <= (wr_data_r >> 16);
+      
+    if (state == WRIT_ACT)
       wr_data_r <= wr_data;
     
     if (state == READ_ACT)
@@ -214,7 +225,7 @@ always @ (posedge clk, negedge rst_n)
 
     if (state == READ_READ)
       begin
-      rd_data_r <= rd_data_r | (data<<(16*((BURST_LENGTH-1)-state_cnt)));
+      rd_data_r <= {rd_data_r,data};
       if (!state_cnt)
         rd_ready_r <= 1'b1;
       end
@@ -245,7 +256,7 @@ always @ (posedge clk, negedge rst_n)
 /* Handle logic for sending addresses to SDRAM based on current state*/
 always @*
 begin
-    if (state[4])
+    if (state == WRIT_CAS || state == WRIT_BURST || state == READ_CAS || state == READ_NOP2 || state == READ_READ)
       {data_mask_low_r, data_mask_high_r} = 2'b00;
     else
       {data_mask_low_r, data_mask_high_r} = 2'b11;
@@ -253,12 +264,12 @@ begin
    bank_addr_r = 2'b00;
    addr_r = {SDRADDR_WIDTH{1'b0}};
 
-   if (state == READ_ACT | state == WRIT_ACT)
+   if (state == READ_ACT || state == WRIT_ACT)
      begin
      bank_addr_r = haddr_r[HADDR_WIDTH-1:HADDR_WIDTH-(BANK_WIDTH)];
      addr_r = haddr_r[HADDR_WIDTH-(BANK_WIDTH+1):HADDR_WIDTH-(BANK_WIDTH+ROW_WIDTH)];
      end
-   else if (state == READ_CAS | state == WRIT_CAS)
+   else if (state == READ_CAS || state == WRIT_CAS)
      begin
      // Send Column Address
      // Set bank to bank to precharge
@@ -276,7 +287,7 @@ begin
      //   column address
      addr_r = {
                {SDRADDR_WIDTH-(11){1'b0}},
-               1'b1,                       /* A10 */
+               AUTO_PRECHARGE,            /* A10 */
                {10-COL_WIDTH{1'b0}},
                haddr_r[COL_WIDTH-1:0]
               };
@@ -288,7 +299,7 @@ begin
      //                                       R  A  EUR
      //                                       S  S-3Q ST
      //                                       T  654L210
-     addr_r = {{SDRADDR_WIDTH-10{1'b0}}, 3'b000,CAS_LATENCY,1'b0,
+     addr_r = {{SDRADDR_WIDTH-10{1'b0}}, 3'b000,CAS_LATENCY,BURST_COUNTING,
         (BURST_LENGTH==1)?3'b000:
         ((BURST_LENGTH==2)?3'b001:
         ((BURST_LENGTH==4)?3'b010:
@@ -381,7 +392,7 @@ begin
           REF_REF:
             begin
             next = REF_NOP2;
-            state_cnt_nxt = 4'd7;
+            state_cnt_nxt = ((ROW_CYCLE_TIME * CLK_FREQUENCY) / 1_000) - 1;
             end
           // REF_NOP2: default - IDLE
 
@@ -395,12 +406,22 @@ begin
             begin
             next = WRIT_CAS;
             command_nxt = CMD_WRIT;
-            state_cnt_nxt = BURST_LENGTH-1;
             end
           WRIT_CAS:
             begin
+                if (BURST_LENGTH > 1) begin
+                    next = WRIT_BURST;
+                    state_cnt_nxt = BURST_LENGTH-2;
+                end
+                else begin
+                    next = WRIT_NOP2;
+                    state_cnt_nxt = 1;
+                end
+            end
+          WRIT_BURST:
+            begin
             next = WRIT_NOP2;
-            state_cnt_nxt = 4'd1;
+            state_cnt_nxt = 1; // We need 2 cycles of inactivity at the end of the write
             end
           // WRIT_NOP2: default - IDLE
 
@@ -408,7 +429,7 @@ begin
           READ_ACT:
             begin
             next = READ_NOP1;
-            state_cnt_nxt = CAS_LATENCY - 2;
+            state_cnt_nxt = 4'd1;
             end
           READ_NOP1:
             begin
@@ -418,7 +439,7 @@ begin
           READ_CAS:
             begin
             next = READ_NOP2;
-            state_cnt_nxt = 4'd1;
+            state_cnt_nxt = CAS_LATENCY - 2;
             end
           READ_NOP2:
             begin
