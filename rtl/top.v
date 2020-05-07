@@ -64,8 +64,6 @@ module top(
     wire pixel_clk;
 
     reg pixel_rst;
-
-    //assign SDRAM_CLK = sys_clk;
     
     // -------------------- //
     // CLK dividers
@@ -73,9 +71,8 @@ module top(
     dcm_sys_clk i_dcm_sys_clk (
          .CLKIN_IN(ref_clk), 
          .RST_IN(rst), 
-         .CLK0_OUT(sys_clk),
-         .CLK270_OUT(SDRAM_CLK),
-         .CLK2X_OUT()
+         .CLK2X_OUT(SDRAM_CLK), 
+         .CLK2X180_OUT(sys_clk)
          );
          
     dcm_pixel_clk i_dcm_pixel_clk (
@@ -115,7 +112,7 @@ module top(
     sdram_controller #(
         .COL_WIDTH(9),
         .ROW_WIDTH(12),
-        .CLK_FREQUENCY(48),  // Mhz
+        .CLK_FREQUENCY(96),  // Mhz
         .REFRESH_TIME(64),   // ms     (Tref : Refresh period, how often we need to refresh)
         .REFRESH_COUNT(8),   // cycles (how many refreshes required per refresh time)
         .ROW_CYCLE_TIME(80), // ns     (Trfc : Row cycle time, the time it takes to auto refresh)
