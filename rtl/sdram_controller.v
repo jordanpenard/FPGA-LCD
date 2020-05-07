@@ -50,13 +50,17 @@ module sdram_controller (
 parameter ROW_WIDTH = 12;
 parameter COL_WIDTH = 9;
 parameter BANK_WIDTH = 2;
-parameter CLK_FREQUENCY = 96;  // Mhz
+parameter CLK_FREQUENCY = 96;   // Mhz
 parameter REFRESH_TIME =  64;   // ms     (Tref : Refresh period, how often we need to refresh)
 parameter REFRESH_COUNT = 1;    // cycles (how many refreshes required per refresh time)
 parameter ROW_CYCLE_TIME = 80;  // ns     (Trfc : Row cycle time, the time it takes to auto refresh)
+parameter POWERUP_TIME = 200;   // us     (How long we should wait after power up before we do any init)
 
 // Can be 1, 2, 4 or 8
-localparam BURST_LENGTH = 4; 
+parameter BURST_LENGTH = 4; 
+
+// CAS latency can either be 2 or 3
+localparam CAS_LATENCY = 3'd3;
 
 /* Parameters for Host interface */
 localparam HADDR_WIDTH = BANK_WIDTH + ROW_WIDTH + COL_WIDTH;
@@ -72,9 +76,6 @@ localparam CYCLES_BETWEEN_REFRESH = ( CLK_FREQUENCY
                                       * 1_000
                                       * REFRESH_TIME
                                     ) / REFRESH_COUNT;
-
-// CAS latency can either be 2 or 3
-localparam CAS_LATENCY = 3'd3;
 
 // 0 : Sequential Counting
 // 1 : Interleave Counting
@@ -169,7 +170,7 @@ assign data_mask_low  = data_mask_low_r;
 assign rd_data        = rd_data_r;
 
 /* Internal Wiring */
-reg [3:0] state_cnt;
+reg [15:0] state_cnt;
 reg [23:0] refresh_cnt;
 
 reg [7:0] command;
@@ -178,7 +179,7 @@ reg [4:0] state;
 // TODO output addr[6:4] when programming mode register
 
 reg [7:0] command_nxt;
-reg [3:0] state_cnt_nxt;
+reg [15:0] state_cnt_nxt;
 reg [4:0] next;
 
 assign {clock_enable, cs_n, ras_n, cas_n, we_n} = command[7:3];
@@ -196,7 +197,7 @@ always @ (posedge clk, negedge rst_n)
     begin
     state <= INIT_NOP1;
     command <= CMD_NOP;
-    state_cnt <= 4'hf;
+    state_cnt <= (POWERUP_TIME * CLK_FREQUENCY);
 
     haddr_r <= {HADDR_WIDTH{1'b0}};
     wr_data_r <= {HDATA_WIDTH{1'b0}};
@@ -225,7 +226,7 @@ always @ (posedge clk, negedge rst_n)
 
     if (state == READ_READ)
       begin
-      rd_data_r <= {rd_data_r,data};
+      rd_data_r <= {data,rd_data_r} >> 16;
       if (!state_cnt)
         rd_ready_r <= 1'b1;
       end
@@ -355,7 +356,7 @@ begin
           INIT_REF1:
             begin
             next = INIT_NOP2;
-            state_cnt_nxt = 4'd7;
+            state_cnt_nxt = ((ROW_CYCLE_TIME * CLK_FREQUENCY) / 1_000) - 1;
             end
           INIT_NOP2:
             begin
@@ -365,7 +366,7 @@ begin
           INIT_REF2:
             begin
             next = INIT_NOP3;
-            state_cnt_nxt = 4'd7;
+            state_cnt_nxt = ((ROW_CYCLE_TIME * CLK_FREQUENCY) / 1_000) - 1;
             end
           INIT_NOP3:
             begin

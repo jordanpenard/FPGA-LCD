@@ -14,8 +14,11 @@
 `define LCD_HIGHT 480
 `define V_BLANKING 45
 
+`define SDRAM_BURST_LENGTH 8
+`define SDRAM_DATA_WIDTH 16
+
 `define ADDR_WIDTH 23
-`define DATA_WIDTH 128
+`define DATA_WIDTH (`SDRAM_BURST_LENGTH * `SDRAM_DATA_WIDTH)
 
 // ROM_PIPELINE is hard coded to 1 as the ROM contains 1 reg stage on the output
 `define ROM_PIPELINE 1
@@ -50,7 +53,7 @@ module top(
      output wire SDRAM_LDQM,
      output wire SDRAM_UDQM,
      output wire [11:0] SDRAM_ADDR,
-     inout wire [15:0] SDRAM_DQ     
+     inout wire [`SDRAM_DATA_WIDTH-1:0] SDRAM_DQ     
     );
 
     // ref_clk : 48Mhz
@@ -113,10 +116,11 @@ module top(
         .COL_WIDTH(9),
         .ROW_WIDTH(12),
         .BANK_WIDTH(2),
-        .CLK_FREQUENCY(48), // Mhz
-        .REFRESH_TIME(64),  // ms     (Tref : Refresh period, how often we need to refresh)
-        .REFRESH_COUNT(1),  // cycles (how many refreshes required per refresh time)
-        .ROW_CYCLE_TIME(80) // ns     (Trfc : Row cycle time, the time it takes to auto refresh)
+        .CLK_FREQUENCY(48),  // Mhz
+        .REFRESH_TIME(64),   // ms     (Tref : Refresh period, how often we need to refresh)
+        .REFRESH_COUNT(1),   // cycles (how many refreshes required per refresh time)
+        .ROW_CYCLE_TIME(80), // ns     (Trfc : Row cycle time, the time it takes to auto refresh)
+        .BURST_LENGTH(`SDRAM_BURST_LENGTH)
     ) i_sdram_controller (
         .wr_addr(mem_wr_addr),
         .wr_data(mem_wr_data),
@@ -164,7 +168,6 @@ module top(
     localparam  INIT        = 4'b0000,
                 WR_REQUEST  = 4'b0001,
                 WR_RESPONSE = 4'b0010,
-                WAIT        = 4'b0011,
                 RD_REQUEST  = 4'b0100,
                 RD_RESPONSE = 4'b0101,
                 RD_VALID    = 4'b0110,
@@ -174,12 +177,12 @@ module top(
     localparam  NOP   = 2'b00,
                 READ  = 2'b01,
                 WRITE = 2'b10;
-
-    assign led1 = !(state == DISPLAY);
-    assign led2 = !(state == RD_REQUEST);
-    assign led3 = !(state == RD_RESPONSE);
-    assign led4 = !(state == WR_RESPONSE);
     
+    assign led1 = !error;
+    assign led2 = !(state == INIT || state == WR_REQUEST || state == WR_RESPONSE);
+    assign led3 = !(state == RD_REQUEST || state == RD_RESPONSE || state == RD_VALID);
+    assign led4 = !(state == DISPLAY);
+
     always @ (posedge sys_clk or posedge rst)
     begin
         if (rst) begin
@@ -207,13 +210,15 @@ module top(
             char_gen_pixel_x_r <= char_gen_pixel_x_next;
             char_gen_pixel_y_r <= char_gen_pixel_y_next;
 
-            if (state == INIT || state == WAIT)
+            if (state == INIT)
                 cnt <= cnt + 1;
             else
                 cnt <= 'b0;
             
             if (state == RD_VALID) begin
-                data_from_sdram <= {mem_rd_data,data_from_sdram[127:64]};
+                data_from_sdram <= mem_rd_data;
+                if (mem_rd_data != 128'h0123456789ABCDEFFEDCBA9876543210)
+                    error <= 'b1;
             end
         end
     end
@@ -233,13 +238,11 @@ module top(
         case (state)
             INIT: begin
                 if (cnt == {8{1'b1}}) begin
-//                    state_next = WR_REQUEST;
-//                    cmd_next = WRITE;
-                    state_next = RD_REQUEST;
-                    cmd_next = READ;
+                    state_next = WR_REQUEST;
+                    cmd_next = WRITE;
                     mem_rd_addr_next = 'b0;
                     mem_wr_addr_next = 'b0;
-                    mem_wr_data_next = 64'h0123456789ABCDEF;
+                    mem_wr_data_next = 128'h0123456789ABCDEFFEDCBA9876543210;
                 end
             end
         
@@ -252,23 +255,15 @@ module top(
 
             WR_RESPONSE: begin
                 if (!mem_busy) begin
-                    if (mem_wr_addr != 0) begin
-                        state_next = WAIT;
-                        cmd_next = NOP;
+                    if (mem_wr_addr >= 23'h7FFFF8) begin
+                        state_next = RD_REQUEST;
+                        cmd_next = READ;
                     end
                     else begin
                         state_next = WR_REQUEST;
                         cmd_next = WRITE;
-                        mem_wr_addr_next = mem_wr_addr_next + 4;
-                        mem_wr_data_next = 64'hFEDCBA9876543210;
+                        mem_wr_addr_next = mem_wr_addr + `SDRAM_BURST_LENGTH;
                     end
-                end
-            end
-
-            WAIT: begin
-                if (cnt == {8{1'b1}}) begin
-                    state_next = RD_REQUEST;
-                    cmd_next = READ;
                 end
             end
 
@@ -287,15 +282,8 @@ module top(
             end
         
             RD_VALID: begin
-                if (mem_rd_addr != 0) begin
-                    state_next = DISPLAY;
-                    cmd_next = NOP;
-                end
-                else begin
-                    state_next = RD_REQUEST;
-                    cmd_next = READ;
-                    mem_rd_addr_next = mem_rd_addr_next + 4;
-                end
+                state_next = DISPLAY;
+                cmd_next = NOP;
             end
             
             DISPLAY: begin
@@ -310,8 +298,9 @@ module top(
                                 char_gen_pixel_y_next = 4'b0000;
                                 if (char_gen_row_r == 29) begin
                                     char_gen_row_next = 'b0;
-                                    state_next = INIT;
-                                    cmd_next = NOP;
+                                    state_next = RD_REQUEST;
+                                    cmd_next = READ;
+                                    mem_rd_addr_next = mem_rd_addr + `SDRAM_BURST_LENGTH;
                                 end
                                 else
                                     char_gen_row_next = char_gen_row_r + 1;
@@ -368,13 +357,13 @@ module top(
                     2: font_rom_char_to_print_next = "R";
                 endcase
             end
-            else begin
-                if (char_gen_row_r == 0 && char_gen_col_r < 7)
-                    font_rom_char_to_print_next = "0" + (4'hF & (mem_rd_addr >> (24 - (4*char_gen_col_r))));
-                if (char_gen_row_r == 1 && char_gen_col_r < (1+(`DATA_WIDTH/4)))
-                    font_rom_char_to_print_next = "0" + (4'hF & (mem_wr_data >> (`DATA_WIDTH - (4*char_gen_col_r))));
-                if (char_gen_row_r == 2 && char_gen_col_r < (1+(`DATA_WIDTH/4)))
-                    font_rom_char_to_print_next = "0" + (4'hF & (data_from_sdram >> (`DATA_WIDTH - (4*char_gen_col_r))));
+            else if (char_gen_col_r > 1) begin
+                if (char_gen_row_r == 0 && char_gen_col_r < 8)
+                    font_rom_char_to_print_next = "0" + (4'hF & (mem_rd_addr >> (24 - (4*(char_gen_col_r-1)))));
+                if (char_gen_row_r == 1 && char_gen_col_r < (2+(`DATA_WIDTH/4)))
+                    font_rom_char_to_print_next = "0" + (4'hF & (mem_wr_data >> (`DATA_WIDTH - (4*(char_gen_col_r-1)))));
+                if (char_gen_row_r == 2 && char_gen_col_r < (2+(`DATA_WIDTH/4)))
+                    font_rom_char_to_print_next = "0" + (4'hF & (data_from_sdram >> (`DATA_WIDTH - (4*(char_gen_col_r-1)))));
                 if (font_rom_char_to_print_next > "9" && font_rom_char_to_print_next < "A")
                     font_rom_char_to_print_next = font_rom_char_to_print_next + 7;
             end
