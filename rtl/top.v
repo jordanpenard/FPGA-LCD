@@ -88,7 +88,7 @@ module top(
     // SDRAM controller
     
     reg [7:0] cnt;
-    reg error;
+    reg [15:0] error;
     
     reg [3:0] state;
     reg [1:0] cmd;
@@ -115,12 +115,12 @@ module top(
     sdram_controller #(
         .COL_WIDTH(9),
         .ROW_WIDTH(12),
-        .BANK_WIDTH(2),
         .CLK_FREQUENCY(48),  // Mhz
         .REFRESH_TIME(64),   // ms     (Tref : Refresh period, how often we need to refresh)
-        .REFRESH_COUNT(1),   // cycles (how many refreshes required per refresh time)
+        .REFRESH_COUNT(8),   // cycles (how many refreshes required per refresh time)
         .ROW_CYCLE_TIME(80), // ns     (Trfc : Row cycle time, the time it takes to auto refresh)
-        .BURST_LENGTH(`SDRAM_BURST_LENGTH)
+        .BURST_LENGTH(`SDRAM_BURST_LENGTH), // Burst length can be 1, 2, 4 or 8
+        .CAS_LATENCY(3)      // CAS latency can either be 2 or 3
     ) i_sdram_controller (
         .wr_addr(mem_wr_addr),
         .wr_data(mem_wr_data),
@@ -218,7 +218,7 @@ module top(
             if (state == RD_VALID) begin
                 data_from_sdram <= mem_rd_data;
                 if (mem_rd_data != 128'h0123456789ABCDEFFEDCBA9876543210)
-                    error <= 'b1;
+                    error <= error + 1;
             end
         end
     end
@@ -355,6 +355,7 @@ module top(
                     0: font_rom_char_to_print_next = "@";
                     1: font_rom_char_to_print_next = "W";
                     2: font_rom_char_to_print_next = "R";
+                    3: font_rom_char_to_print_next = "E";
                 endcase
             end
             else if (char_gen_col_r > 1) begin
@@ -364,6 +365,8 @@ module top(
                     font_rom_char_to_print_next = "0" + (4'hF & (mem_wr_data >> (`DATA_WIDTH - (4*(char_gen_col_r-1)))));
                 if (char_gen_row_r == 2 && char_gen_col_r < (2+(`DATA_WIDTH/4)))
                     font_rom_char_to_print_next = "0" + (4'hF & (data_from_sdram >> (`DATA_WIDTH - (4*(char_gen_col_r-1)))));
+                if (char_gen_row_r == 3 && char_gen_col_r < 6)
+                    font_rom_char_to_print_next = "0" + (4'hF & (error >> (16 - (4*(char_gen_col_r-1)))));
                 if (font_rom_char_to_print_next > "9" && font_rom_char_to_print_next < "A")
                     font_rom_char_to_print_next = font_rom_char_to_print_next + 7;
             end

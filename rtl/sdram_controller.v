@@ -3,27 +3,18 @@
 //
 // Target device : Xilinx Spartan 3AN XC3S200AN
 // Author : Jordan Penard
-// Source : https://github.com/stffrdhrn/sdram-controller
 // Design name : sdram_controller
-// Comments :   Modified for this project
-//              Simple controller for M52D128168A-10BG SDRAM (2M x 16 Bit x 4 Banks)
+// Comments :   Simple controller for M52D128168A-10BG SDRAM (2M x 16 Bit x 4 Banks)
 //              Working on making it a bit more generic via parameters
 //
 //              Very simple host interface
-//                 * No burst support
-//                 * haddr - address for reading and wriging 16 bits of data
-//                 * data_input - data for writing, latched in when wr_enable is highz0
-//                 * data_output - data for reading, comes available sometime
-//                   *few clocks* after rd_enable and address is presented on bus
-//                 * rst_n - start init ram process
-//                 * rd_enable - read enable, on clk posedge haddr will be latched in,
-//                   after *few clocks* data will be available on the data_output port
-//                 * wr_enable - write enable, on clk posedge haddr and data_input will
-//                   be latched in, after *few clocks* data will be written to sdram
-//
-//              Theory
-//                  This simple host interface has a busy signal to tell you when you are
-//                  not able to issue commands.
+//                 * wr_data - data for writing, latched in when wr_enable is high
+//                 * rd_data - data for reading, comes available when rd_ready is high
+//                 * rst_n - active low reset, starts the init ram process when released
+//                 * rd_enable - active high read request
+//                 * wr_enable - active high write request
+//                 * busy - active when a read or a write is in progress, address, data
+//                          and rd/wr enable inputs should be released as soon as busy is high 
 //
 //
 //////////////////////////////////////////////////////////////////////////////////
@@ -49,18 +40,16 @@ module sdram_controller (
 /* Parameters for SDRAM */
 parameter ROW_WIDTH = 12;
 parameter COL_WIDTH = 9;
-parameter BANK_WIDTH = 2;
 parameter CLK_FREQUENCY = 96;   // Mhz
 parameter REFRESH_TIME =  64;   // ms     (Tref : Refresh period, how often we need to refresh)
 parameter REFRESH_COUNT = 1;    // cycles (how many refreshes required per refresh time)
 parameter ROW_CYCLE_TIME = 80;  // ns     (Trfc : Row cycle time, the time it takes to auto refresh)
 parameter POWERUP_TIME = 200;   // us     (How long we should wait after power up before we do any init)
+parameter CAS_LATENCY = 3;      // CAS latency can either be 2 or 3
+parameter BURST_LENGTH = 4;     // Burst length can be 1, 2, 4 or 8
 
-// Can be 1, 2, 4 or 8
-parameter BURST_LENGTH = 4; 
-
-// CAS latency can either be 2 or 3
-localparam CAS_LATENCY = 3'd3;
+localparam BANK_WIDTH = 2;
+localparam CAS_LATENCY_INT = (CAS_LATENCY == 2) ? 3'b010 : 3'b011;
 
 /* Parameters for Host interface */
 localparam HADDR_WIDTH = BANK_WIDTH + ROW_WIDTH + COL_WIDTH;
@@ -300,7 +289,9 @@ begin
      //                                       R  A  EUR
      //                                       S  S-3Q ST
      //                                       T  654L210
-     addr_r = {{SDRADDR_WIDTH-10{1'b0}}, 3'b000,CAS_LATENCY,BURST_COUNTING,
+     addr_r = {{SDRADDR_WIDTH-10{1'b0}}, 3'b000,
+        CAS_LATENCY_INT,
+        BURST_COUNTING,
         (BURST_LENGTH==1)?3'b000:
         ((BURST_LENGTH==2)?3'b001:
         ((BURST_LENGTH==4)?3'b010:
@@ -440,7 +431,7 @@ begin
           READ_CAS:
             begin
             next = READ_NOP2;
-            state_cnt_nxt = CAS_LATENCY - 2;
+            state_cnt_nxt = CAS_LATENCY_INT - 2;
             end
           READ_NOP2:
             begin
